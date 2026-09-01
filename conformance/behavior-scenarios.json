@@ -8,7 +8,8 @@
     "expect.throws": "False means the SDK must not throw into application code under any circumstance in this scenario. True means it must propagate, and is used only where the application's own error owns the failure.",
     "expect.providerCalls": "The provider callbacks the SDK actually invoked, in order. An empty list is the assertion that matters most for `block` and `topup_required`: enforcement is worthless if the call still went out.",
     "expect.requests": "The HTTP requests the mock server actually received, in order, after the runner flushed. `bodyIncludes` is a partial match on the parsed JSON body. `bodyMatches` applies a regular expression to a field's string value, for values that are generated and therefore cannot be compared literally.",
-    "expect.onErrorContexts": "The `context` values the SDK passed to its error hook. Transport failures must surface here rather than as exceptions."
+    "expect.onErrorContexts": "The `context` values the SDK passed to its error hook. Transport failures must surface here rather than as exceptions.",
+    "expect.requestsUnordered": "The HTTP requests the mock received, matched by method and path rather than in order. Set only where the API itself documents the requests as order independent: the usage event and the acknowledgment after a completed call are fired concurrently and reconciled server side, so requiring an order would force every SDK to serialise its background work for a constraint the product does not have. Everything else stays ordered, because an acknowledgment arriving before its own decision is a real bug."
   },
   "scenarios": [
     {
@@ -81,7 +82,8 @@
               "acknowledgment": "proceeded_as_requested"
             }
           }
-        ]
+        ],
+        "requestsUnordered": true
       }
     },
     {
@@ -158,7 +160,8 @@
               "acknowledgment": "used_downgrade_model"
             }
           }
-        ]
+        ],
+        "requestsUnordered": true
       }
     },
     {
@@ -628,7 +631,8 @@
             "method": "POST",
             "path": "/v1/decisions/dec_5/ack"
           }
-        ]
+        ],
+        "requestsUnordered": true
       }
     },
     {

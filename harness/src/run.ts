@@ -46,6 +46,8 @@ export interface Scenario {
     result?: Record<string, unknown>;
     providerCalls?: Array<Record<string, unknown>>;
     requests?: ExpectedRequest[];
+    /** See the conventions note in the scenario file. */
+    requestsUnordered?: boolean;
     onErrorContexts?: string[];
   };
 }
@@ -118,8 +120,17 @@ export function checkScenario(
           requests.map((r) => `${r.method} ${r.path}`).join(", "),
       );
     } else {
+      // Order is significant by default: an acknowledgment before its decision
+      // is a real bug. A scenario opts out only where the API itself documents
+      // the pair as order independent, so that requiring an order would force
+      // every SDK to serialise background work for a constraint the product
+      // does not have.
+      const ordered = s.expect.requestsUnordered
+        ? matchUnordered(s.expect.requests, requests, failures)
+        : requests;
       s.expect.requests.forEach((want, i) => {
-        const got = requests[i] as RecordedRequest;
+        const got = ordered[i] as RecordedRequest;
+        if (got === undefined) return;
         if (got.method !== want.method || got.path !== want.path) {
           failures.push(
             `requests[${i}]: expected ${want.method} ${want.path}, got ${got.method} ${got.path}`,
@@ -198,6 +209,30 @@ export function checkScenario(
   requests.forEach((r, i) => scan(r.body, `requests[${i}]`));
 
   return failures;
+}
+
+/**
+ * Pairs each expectation with the recorded request that matches its method and
+ * path, so an unordered scenario still checks bodies and headers per request
+ * rather than degrading into a count.
+ */
+function matchUnordered(
+  wants: ExpectedRequest[],
+  requests: RecordedRequest[],
+  failures: string[],
+): Array<RecordedRequest | undefined> {
+  const pool = [...requests];
+  return wants.map((want) => {
+    const index = pool.findIndex((r) => r.method === want.method && r.path === want.path);
+    if (index === -1) {
+      failures.push(
+        `no request matched ${want.method} ${want.path}; got ` +
+          requests.map((r) => `${r.method} ${r.path}`).join(", "),
+      );
+      return undefined;
+    }
+    return pool.splice(index, 1)[0];
+  });
 }
 
 /** Drives one scenario end to end. Exported so the vitest suite can reuse it. */

@@ -11,8 +11,22 @@
 
 import { loadScenarios, nodeRunner, runScenario } from "./run.js";
 
+/**
+ * A runner is any command speaking the stdin/stdout contract in run.ts.
+ *
+ * Paths are relative to this harness directory, so the defaults assume the
+ * usual layout: this repository as a submodule at `contract/` in an SDK
+ * repository, with the runner at that repository's root. MF_RUNNER and the
+ * per-language interpreter variables override that for any other arrangement,
+ * which is also how CI points at a freshly built artifact rather than the
+ * source tree.
+ */
 const RUNNERS: Record<string, string[]> = {
-  node: [nodeRunner(), "runners/node/runner.ts"],
+  node: [nodeRunner(), process.env["MF_RUNNER"] ?? "runners/node/runner.ts"],
+  python: [
+    process.env["MF_PYTHON"] ?? "python3",
+    process.env["MF_RUNNER"] ?? "../../conformance_runner.py",
+  ],
 };
 
 const name = process.argv[2] ?? "node";

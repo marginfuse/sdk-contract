@@ -53,9 +53,16 @@ Add an entry to `RUNNERS` in `src/cli.ts`:
 ```ts
 const RUNNERS: Record<string, string[]> = {
   node: [nodeRunner(), "runners/node/runner.ts"],
-  python: ["python3", "runners/python/runner.py"],
+  python: [process.env["MF_PYTHON"] ?? "python3", "../../conformance_runner.py"],
+  go: ["go", "run", "../../conformance_runner.go"],
 };
 ```
+
+Paths are relative to the harness directory. The defaults assume this
+repository sits at `contract/` in an SDK repository with the runner at that
+repository's root. `MF_RUNNER` and the per-language interpreter variables
+override it, which is how CI points at a freshly built artifact instead of the
+source tree.
 
 Then:
 

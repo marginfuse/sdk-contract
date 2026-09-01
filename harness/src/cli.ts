@@ -34,6 +34,8 @@ const RUNNERS: Record<string, string[]> = {
     process.env["MF_RUNNER"] ??
       "../../tools/ConformanceRunner/bin/Release/net8.0/conformance-runner.dll",
   ],
+  ruby: [process.env["MF_RUBY"] ?? "ruby", process.env["MF_RUNNER"] ?? "../../exe/conformance_runner.rb"],
+  php: ["php", process.env["MF_RUNNER"] ?? "../../bin/conformance-runner.php"],
 };
 
 const name = process.argv[2] ?? "node";

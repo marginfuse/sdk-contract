@@ -1,0 +1,16 @@
+{
+  "name": "@marginfuse/conformance-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Drives a MarginFuse SDK through the shared conformance scenarios.",
+  "scripts": {
+    "conformance": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2"
+  }
+}

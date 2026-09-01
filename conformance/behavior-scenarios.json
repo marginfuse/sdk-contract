@@ -1,0 +1,742 @@
+{
+  "version": 1,
+  "description": "Behavioral conformance scenarios for MarginFuse SDKs. Every SDK, in every language, is driven through these against a scripted mock server and must produce the same observable behavior. The gateway vectors cover arithmetic; these cover the promise the SDK makes to the application it sits inside: it never breaks the caller, and it never runs a provider call it was told not to run.",
+  "conventions": {
+    "server": "Scripted responses keyed by `METHOD /path`. The value is a list consumed in order; the last entry repeats for any further calls. `delayMs` holds the response open, `raw` sends a body verbatim instead of JSON, `status` defaults to 200.",
+    "action": "What the runner asks the SDK to do: `decide`, `track`, `guard`, or `acknowledge`.",
+    "provider": "For `guard` only. Describes the fake provider call the runner passes in: whether it throws, and what usage it reports back.",
+    "expect.throws": "False means the SDK must not throw into application code under any circumstance in this scenario. True means it must propagate, and is used only where the application's own error owns the failure.",
+    "expect.providerCalls": "The provider callbacks the SDK actually invoked, in order. An empty list is the assertion that matters most for `block` and `topup_required`: enforcement is worthless if the call still went out.",
+    "expect.requests": "The HTTP requests the mock server actually received, in order, after the runner flushed. `bodyIncludes` is a partial match on the parsed JSON body. `bodyMatches` applies a regular expression to a field's string value, for values that are generated and therefore cannot be compared literally.",
+    "expect.onErrorContexts": "The `context` values the SDK passed to its error hook. Transport failures must surface here rather than as exceptions."
+  },
+  "scenarios": [
+    {
+      "id": "decide-allow",
+      "name": "an allow verdict runs the provider with the requested model",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "id": "dec_1",
+              "action": "allow",
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "degraded": false
+            }
+          }
+        ],
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ],
+        "POST /v1/decisions/dec_1/ack": [
+          {
+            "body": {
+              "ok": true
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "feature": "ai_chat",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "usage": {
+          "inputTokens": 100,
+          "outputTokens": 20
+        }
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "kind": "completed"
+        },
+        "providerCalls": [
+          {
+            "model": "gpt-4.1",
+            "provider": "openai"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/decisions/dec_1/ack",
+            "bodyIncludes": {
+              "acknowledgment": "proceeded_as_requested"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "decide-downgrade",
+      "name": "a downgrade verdict runs the provider with the model the server chose",
+      "why": "The downgrade is only real if the application actually calls the cheaper model. Reporting it without using it would book savings that never happened.",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "id": "dec_2",
+              "action": "downgrade",
+              "model": "gpt-4.1-mini",
+              "provider": "openai",
+              "degraded": false
+            }
+          }
+        ],
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ],
+        "POST /v1/decisions/dec_2/ack": [
+          {
+            "body": {
+              "ok": true
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "usage": {
+          "inputTokens": 100,
+          "outputTokens": 20
+        }
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "kind": "completed"
+        },
+        "providerCalls": [
+          {
+            "model": "gpt-4.1-mini",
+            "provider": "openai"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "bodyIncludes": {
+              "model": "gpt-4.1-mini",
+              "requestedModel": "gpt-4.1"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/decisions/dec_2/ack",
+            "bodyIncludes": {
+              "acknowledgment": "used_downgrade_model"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "block-never-calls-provider",
+      "name": "a block verdict never calls the provider",
+      "why": "This is the whole product. If the provider call still goes out, MarginFuse cost the customer money and saved nothing.",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "id": "dec_3",
+              "action": "block",
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "degraded": false
+            }
+          }
+        ],
+        "POST /v1/decisions/dec_3/ack": [
+          {
+            "body": {
+              "ok": true
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "usage": {}
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "kind": "blocked"
+        },
+        "providerCalls": [],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/decisions/dec_3/ack",
+            "bodyIncludes": {
+              "acknowledgment": "blocked_before_provider_call"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "block-without-id-still-blocks",
+      "name": "a block with no decision id still blocks",
+      "why": "Enforcement depends on the action alone. A missing id costs an acknowledgment; it must never turn a block into a provider call.",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "action": "block",
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "degraded": false
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "usage": {}
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "kind": "blocked"
+        },
+        "providerCalls": [],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          }
+        ]
+      }
+    },
+    {
+      "id": "topup-never-calls-provider",
+      "name": "a topup_required verdict never calls the provider",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "id": "dec_4",
+              "action": "topup_required",
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "topupContext": "billing/upgrade",
+              "degraded": false
+            }
+          }
+        ],
+        "POST /v1/decisions/dec_4/ack": [
+          {
+            "body": {
+              "ok": true
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "usage": {}
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "kind": "topup_required"
+        },
+        "providerCalls": [],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/decisions/dec_4/ack",
+            "bodyIncludes": {
+              "acknowledgment": "presented_topup"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "decide-timeout-fails-open",
+      "name": "a decide that times out fails open to allow",
+      "why": "MarginFuse being slow must never become the customer's outage. The request proceeds unprotected, and says so.",
+      "options": {
+        "timeoutMs": 150
+      },
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "delayMs": 2000,
+            "body": {
+              "id": "never",
+              "action": "block"
+            }
+          }
+        ]
+      },
+      "action": "decide",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "action": "allow",
+          "degraded": true,
+          "degradedReason": "timeout",
+          "model": "gpt-4.1"
+        },
+        "onErrorContexts": [
+          "decide"
+        ]
+      }
+    },
+    {
+      "id": "decide-500-fails-open",
+      "name": "a decide that errors fails open to allow",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "status": 500,
+            "body": {
+              "error": "boom"
+            }
+          }
+        ]
+      },
+      "action": "decide",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "action": "allow",
+          "degraded": true,
+          "model": "gpt-4.1"
+        },
+        "onErrorContexts": [
+          "decide"
+        ]
+      }
+    },
+    {
+      "id": "decide-malformed-json-fails-open",
+      "name": "a decide answered with malformed JSON fails open, it does not crash",
+      "why": "A proxy or a captive portal can return HTML with a 200. The SDK is in the request path, so it has to survive that.",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "raw": "<html>gateway error</html>"
+          }
+        ]
+      },
+      "action": "decide",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "action": "allow",
+          "degraded": true,
+          "model": "gpt-4.1"
+        },
+        "onErrorContexts": [
+          "decide"
+        ]
+      }
+    },
+    {
+      "id": "track-retries-server-errors",
+      "name": "track retries a 500 and succeeds without the caller knowing",
+      "server": {
+        "POST /v1/events": [
+          {
+            "status": 500
+          },
+          {
+            "status": 500
+          },
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_retry",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          }
+        ],
+        "onErrorContexts": []
+      }
+    },
+    {
+      "id": "track-retries-rate-limit",
+      "name": "track retries a 429 rather than dropping the event",
+      "why": "A rate limit is temporary. Giving up on it would lose measurement the customer is paying for.",
+      "server": {
+        "POST /v1/events": [
+          {
+            "status": 429
+          },
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_429",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          }
+        ],
+        "onErrorContexts": []
+      }
+    },
+    {
+      "id": "track-gives-up-on-client-error",
+      "name": "track does not retry a 422 and surfaces it once",
+      "why": "A malformed event will be malformed on every attempt. Retrying it is noise, and hiding it entirely would leave the integration silently broken.",
+      "server": {
+        "POST /v1/events": [
+          {
+            "status": 422,
+            "body": {
+              "error": "invalid_body"
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_422",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          }
+        ],
+        "onErrorContexts": [
+          "track"
+        ]
+      }
+    },
+    {
+      "id": "flush-drains-before-exit",
+      "name": "flush waits for queued work",
+      "why": "Scripts and background jobs exit as soon as their work returns. Without flush, the last events of every batch job are lost.",
+      "server": {
+        "POST /v1/events": [
+          {
+            "delayMs": 200,
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_flush",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guard-rethrows-provider-failure",
+      "name": "guard propagates the provider's own error, after recording the attempt",
+      "why": "The application's error handling owns provider failures, so this is the one place the SDK must not swallow. It still records the attempt, because the provider may have charged for it.",
+      "server": {
+        "POST /v1/decisions": [
+          {
+            "body": {
+              "id": "dec_5",
+              "action": "allow",
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "degraded": false
+            }
+          }
+        ],
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ],
+        "POST /v1/decisions/dec_5/ack": [
+          {
+            "body": {
+              "ok": true
+            }
+          }
+        ]
+      },
+      "action": "guard",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      "provider": {
+        "throws": true
+      },
+      "expect": {
+        "throws": true,
+        "providerCalls": [
+          {
+            "model": "gpt-4.1",
+            "provider": "openai"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/decisions"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "bodyIncludes": {
+              "outcome": "provider_error"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/decisions/dec_5/ack"
+          }
+        ]
+      }
+    },
+    {
+      "id": "track-sends-event-id-verbatim",
+      "name": "track sends the caller's eventId unchanged",
+      "why": "Idempotency is the caller's safety net for an ambiguous network failure. Rewriting or regenerating the id would turn a safe retry into a double charge.",
+      "server": {
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_caller_chosen",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "bodyIncludes": {
+              "eventId": "evt_caller_chosen"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "track-generates-event-id-when-omitted",
+      "name": "track generates an eventId when the caller omits one",
+      "why": "The id is the idempotency key, so one is always required on the wire. Generating it must also work on every runtime the SDK claims to support: a UUID source that is missing on an older runtime turns this into an exception thrown out of track, which is the one thing the SDK must never do.",
+      "server": {
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "bodyMatches": {
+              "eventId": "^.+$"
+            }
+          }
+        ],
+        "onErrorContexts": []
+      }
+    },
+    {
+      "id": "auth-header-is-bearer",
+      "name": "every request carries the API key as a bearer token",
+      "server": {
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "eventId": "evt_auth",
+        "customerId": "cus_1",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "headersInclude": {
+              "authorization": "Bearer mf_test_conformance"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

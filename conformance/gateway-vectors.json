@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "description": "Golden vectors for MarginFuse gateway adapters. Every SDK, in every language, reads this file and asserts against it. Adapters are pure functions with no I/O, which makes them look like the easiest part of the SDK to port and makes them the easiest part to get silently wrong: both hazards below misstate margin without raising an error. Port against these vectors, never by eye.",
+  "conventions": {
+    "input": "The provider's raw usage object, exactly as it arrives on the response. `null` means the adapter is called with an explicit null.",
+    "omitInput": "When true, call the adapter with no argument at all. Languages with no distinction between absent and null may treat this the same as `input: null`.",
+    "expected.usage": "The MarginFuse usage fields. A field absent here must be absent from the adapter's output, not present and zero: a zero token count is a claim that the call used none, which is a different statement from not knowing.",
+    "expected.costUsd": "Absent means the adapter must not emit a cost at all, so the event falls through to MarginFuse's own pricing instead of claiming a $0 charge. Present means an exact decimal string, never exponent notation."
+  },
+  "adapters": {
+    "fromOpenRouter": {
+      "provider": "openrouter",
+      "hazards": [
+        "`prompt_tokens` is the TOTAL input count: cached reads and cache writes are already inside it. MarginFuse prices inputTokens, cachedInputTokens and cacheCreationTokens as three separate charges and sums them, so passing `prompt_tokens` straight through charges every cached token twice, at the full uncached rate.",
+        "`cost` is a floating point number, and the small values cheap models produce stringify to exponent notation (1.2e-7) in most languages. The API rejects that: costUsd must match ^\\d+(\\.\\d+)?$. Format fixed point to 9 decimal places and trim trailing zeros."
+      ],
+      "cases": [
+        {
+          "name": "cached tokens are not double counted inside prompt_tokens",
+          "why": "The shape from OpenRouter's prompt-caching docs: 10,318 of the 10,339 prompt tokens were cache reads, so only 21 were billed at the full input rate.",
+          "input": {
+            "prompt_tokens": 10339,
+            "completion_tokens": 60,
+            "prompt_tokens_details": { "cached_tokens": 10318, "cache_write_tokens": 0 }
+          },
+          "expected": {
+            "usage": { "inputTokens": 21, "outputTokens": 60, "cachedInputTokens": 10318 }
+          }
+        },
+        {
+          "name": "cache writes are split out of prompt_tokens too",
+          "why": "Cache creation is priced differently from both fresh input and cache reads, so all three come out of the same total.",
+          "input": {
+            "prompt_tokens": 1000,
+            "completion_tokens": 50,
+            "prompt_tokens_details": { "cached_tokens": 200, "cache_write_tokens": 300 }
+          },
+          "expected": {
+            "usage": {
+              "inputTokens": 500,
+              "outputTokens": 50,
+              "cachedInputTokens": 200,
+              "cacheCreationTokens": 300
+            }
+          }
+        },
+        {
+          "name": "the gateway's own cost is carried through as a decimal string",
+          "why": "Forwarding what the gateway actually charged is what makes the figure exact rather than estimated.",
+          "input": { "prompt_tokens": 194, "completion_tokens": 2, "cost": 0.95 },
+          "expected": { "usage": { "inputTokens": 194, "outputTokens": 2 }, "costUsd": "0.95" }
+        },
+        {
+          "name": "a small cost does not become exponent notation",
+          "why": "String() in most languages emits 1.2e-7 here, which the API rejects outright.",
+          "input": { "cost": 0.00000012 },
+          "expected": { "usage": {}, "costUsd": "0.00000012" }
+        },
+        {
+          "name": "a cost at one micro-dollar keeps its digits",
+          "input": { "cost": 0.000001 },
+          "expected": { "usage": {}, "costUsd": "0.000001" }
+        },
+        {
+          "name": "a cost of exactly one nano-dollar survives",
+          "why": "Nano precision is the floor the money type represents; anything above it must round-trip.",
+          "input": { "cost": 1e-9 },
+          "expected": { "usage": {}, "costUsd": "0.000000001" }
+        },
+        {
+          "name": "a zero cost is reported as zero, not omitted",
+          "why": "A gateway that says a call was free is telling us something. That is different from saying nothing.",
+          "input": { "cost": 0 },
+          "expected": { "usage": {}, "costUsd": "0" }
+        },
+        {
+          "name": "sub-nano cost rounds to zero rather than inventing precision",
+          "why": "Money below a nano cannot be represented, so it rounds down honestly instead of being padded into a number the ladder would treat as exact.",
+          "input": { "cost": 1e-12 },
+          "expected": { "usage": {}, "costUsd": "0" }
+        },
+        {
+          "name": "costUsd is omitted when the response carried no cost",
+          "why": "Emitting 0 here would claim the call was free. Omitting it lets MarginFuse price the call itself and label the result estimated.",
+          "input": { "prompt_tokens": 10, "completion_tokens": 5 },
+          "expected": { "usage": { "inputTokens": 10, "outputTokens": 5 } }
+        },
+        {
+          "name": "an explicitly null usage object is tolerated",
+          "why": "The adapter is on the response path of a call that already succeeded. It must never be the thing that throws.",
+          "input": null,
+          "expected": { "usage": {} }
+        },
+        {
+          "name": "a missing usage object is tolerated",
+          "input": null,
+          "omitInput": true,
+          "expected": { "usage": {} }
+        },
+        {
+          "name": "null fields inside the usage object are tolerated",
+          "input": { "prompt_tokens": null, "cost": null },
+          "expected": { "usage": {} }
+        },
+        {
+          "name": "input tokens clamp rather than going negative",
+          "why": "If a provider ever reports cached tokens exceeding the prompt total, the honest answer is no fresh input, not a negative charge that would credit the customer.",
+          "input": { "prompt_tokens": 100, "prompt_tokens_details": { "cached_tokens": 900 } },
+          "expected": { "usage": { "cachedInputTokens": 900 } }
+        }
+      ]
+    }
+  }
+}

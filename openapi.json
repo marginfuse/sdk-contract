@@ -1,0 +1,645 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MarginFuse API",
+    "version": "1.0.0",
+    "summary": "Profitability guardrails for AI SaaS.",
+    "description": "MarginFuse connects revenue to per-request AI cost. This API has two jobs: accept usage\nevents after a provider call (`/v1/events`), and answer whether the next call should run\nat all (`/v1/decisions`).\n\n### Metadata only, by construction\n\nEvery request body is validated strictly and rejects unknown fields. There is no field for\nprompt text, responses, or documents anywhere in this contract, so MarginFuse cannot\nreceive them.\n\n### Every failure is safe\n\nThe official SDKs treat any non-2xx response, timeout or transport error as fail-open: the\ncalling application proceeds unprotected rather than breaking. A rate limit, an outage and\na rejected payload therefore all degrade measurement, never availability. Anything you\nbuild directly against this API should hold the same contract.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "contact": {
+      "name": "MarginFuse",
+      "url": "https://marginfuse.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.marginfuse.com",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Events",
+      "description": "Report what an AI call actually cost, after it ran."
+    },
+    {
+      "name": "Decisions",
+      "description": "Ask whether a call should run, before it runs."
+    },
+    {
+      "name": "Health",
+      "description": "Liveness, including a database round trip."
+    }
+  ],
+  "paths": {
+    "/v1/events": {
+      "post": {
+        "tags": [
+          "Events"
+        ],
+        "operationId": "ingestEvents",
+        "summary": "Report usage for AI calls that already happened",
+        "description": "Accepts up to 500 events per request. Each event is processed independently: the\nresponse carries one result per event, in request order, and a rejected event does\nnot fail the batch.\n\n**Idempotent on `eventId`.** Re-sending an event you already sent returns status\n`duplicate` and changes nothing, so a retry after an ambiguous network failure is\nalways safe. To correct a figure you already reported, send a new `eventId` and set\n`correctsEventId` to the original.\n\nSend `costUsd` when your provider tells you the real charge (gateways such as\nOpenRouter do). Otherwise omit it and MarginFuse prices the call from token counts,\nlabeling the result as estimated rather than observed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch processed. Inspect each result for its individual status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or unrecognized API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body did not match the schema. `issues` lists up to 10 problems.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this API key. These events are neither measured nor protected, but the SDK fails open so the caller keeps working.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/decisions": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "operationId": "createDecision",
+        "summary": "Ask whether the next AI call should run",
+        "description": "Evaluates the project's policies against this customer's current margin and returns\nan action to take **before** you call the provider:\n\n- `allow` proceed with the model you asked for\n- `downgrade` proceed, but use the `model` in the response instead\n- `topup_required` do not call the provider; present the top-up path to the customer\n- `block` do not call the provider\n\nPolicies run in dry-run before they run live, so this endpoint records what protection\n*would* have done against real traffic without acting on it. A dry-run policy always\nanswers `allow`.\n\nReport back with `/v1/decisions/{id}/ack` once you know what your application did.\nSavings can only be credited as realized on that confirmation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A verdict. Enforce on `action` alone.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or unrecognized API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body did not match the schema. `issues` lists up to 10 problems.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this API key. Treat as unavailable and fail open: allow the call rather than failing the customer's request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/decisions/{id}/ack": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "operationId": "acknowledgeDecision",
+        "summary": "Report what your application did with a decision",
+        "description": "Closes the loop on a decision. This is evidence, not bookkeeping: MarginFuse will not\ncount an avoided provider call as realized savings without the application confirming\nthe call did not occur.\n\n`presented_topup` deliberately does not earn realized savings on its own. The customer\nmay have paid and proceeded, so the call may well have happened.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The `id` returned by `/v1/decisions`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or unrecognized API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No decision with this id belongs to the authenticated project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body did not match the schema.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "openapiDocument",
+        "summary": "This document",
+        "description": "The machine-readable contract, served by the same deployment that enforces it. Unauthenticated, so an SDK author or an agent can read the API before being given a key.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "An OpenAPI 3.1 document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "health",
+        "summary": "Liveness, including a database round trip",
+        "description": "Unauthenticated. Returns 503 when the database is unreachable, so a rotated credential or a dead pooler shows up here and not only as failing traffic.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Serving traffic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database could not be reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A project API key, sent as `Authorization: Bearer mf_live_...`.\n\nKeys are secrets and this is a server-side API: never ship one in a browser bundle, a\nmobile app, or anything else a user can read. Only the hash of a key is stored, so a\nlost key is rotated, never recovered."
+      }
+    },
+    "schemas": {
+      "EventsRequest": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "minItems": 1,
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "customerId": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "feature": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "requestedModel": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "usage": {
+                  "default": {},
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "outputTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "cachedInputTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "cacheCreationTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "images": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "audioSeconds": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "costUsd": {
+                  "type": "string",
+                  "pattern": "^\\d+(\\.\\d+)?$"
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "provider_error",
+                    "app_cancelled",
+                    "timeout"
+                  ]
+                },
+                "decisionId": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "retryOfEventId": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "correctsEventId": {
+                  "type": "string",
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "eventId",
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "EventsResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "accepted",
+                    "duplicate",
+                    "corrected",
+                    "invalid"
+                  ]
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "eventId",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "additionalProperties": false
+      },
+      "DecideRequest": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "feature": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expectedUsage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "outputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cachedInputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cacheCreationTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "images": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "audioSeconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "customerId",
+          "provider",
+          "model"
+        ],
+        "additionalProperties": false
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "downgrade",
+              "topup_required",
+              "block"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "topupContext": {
+            "type": "string"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "model",
+          "provider",
+          "degraded"
+        ],
+        "additionalProperties": false
+      },
+      "AckRequest": {
+        "type": "object",
+        "properties": {
+          "acknowledgment": {
+            "type": "string",
+            "enum": [
+              "proceeded_as_requested",
+              "used_downgrade_model",
+              "presented_topup",
+              "blocked_before_provider_call",
+              "failed_to_apply"
+            ]
+          }
+        },
+        "required": [
+          "acknowledgment"
+        ],
+        "additionalProperties": false
+      },
+      "AckResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "db": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "db"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array",
+            "items": {}
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

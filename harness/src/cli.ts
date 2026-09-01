@@ -28,6 +28,7 @@ const RUNNERS: Record<string, string[]> = {
     process.env["MF_RUNNER"] ?? "../../conformance_runner.py",
   ],
   go: ["go", "run", process.env["MF_RUNNER"] ?? "../../cmd/conformance-runner"],
+  java: ["java", "-jar", process.env["MF_RUNNER"] ?? "../../build/conformance/conformance-runner.jar"],
 };
 
 const name = process.argv[2] ?? "node";

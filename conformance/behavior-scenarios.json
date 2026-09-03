@@ -808,8 +808,8 @@
           {
             "method": "POST",
             "path": "/v1/identify",
-            "bodyIncludes": {
-              "periodStart": "2026-06-05T09:30:00.000Z"
+            "bodyMatches": {
+              "periodStart": "^2026-06-05T09:30:00(\\.0+)?Z$"
             }
           }
         ]

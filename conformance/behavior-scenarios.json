@@ -741,6 +741,170 @@
           }
         ]
       }
+    },
+    {
+      "id": "identify-sends-plan",
+      "name": "identify sends the declared plan and returns what is in force",
+      "server": {
+        "POST /v1/identify": [
+          {
+            "body": {
+              "customerId": "cus_local_1",
+              "plan": "pro",
+              "periodStart": "2026-09-01T00:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "action": "identify",
+      "params": {
+        "customerId": "acct_9001",
+        "plan": "pro",
+        "name": "Acme",
+        "metadata": {
+          "tier": "legacy"
+        }
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "ok": true
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/identify",
+            "bodyIncludes": {
+              "customerId": "acct_9001",
+              "plan": "pro",
+              "name": "Acme"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "identify-backdated-cycle-start",
+      "name": "a backdated cycle start goes on the wire as an ISO instant",
+      "server": {
+        "POST /v1/identify": [
+          {
+            "body": {
+              "customerId": "c",
+              "plan": "pro"
+            }
+          }
+        ]
+      },
+      "action": "identify",
+      "params": {
+        "customerId": "a",
+        "plan": "pro",
+        "periodStart": "2026-06-05T09:30:00.000Z"
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/identify",
+            "bodyIncludes": {
+              "periodStart": "2026-06-05T09:30:00.000Z"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "identify-reports-rejection",
+      "name": "a rejected identify is reported, not swallowed and not thrown",
+      "server": {
+        "POST /v1/identify": [
+          {
+            "status": 404,
+            "body": {
+              "error": "plan_not_found"
+            }
+          }
+        ]
+      },
+      "action": "identify",
+      "params": {
+        "customerId": "a",
+        "plan": "nope"
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "ok": false
+        },
+        "onErrorContexts": [
+          "identify"
+        ]
+      }
+    },
+    {
+      "id": "identify-server-error-does-not-throw",
+      "name": "a server outage is reported, never thrown into the application",
+      "server": {
+        "POST /v1/identify": [
+          {
+            "status": 503,
+            "body": {
+              "error": "unavailable"
+            }
+          }
+        ]
+      },
+      "action": "identify",
+      "params": {
+        "customerId": "a",
+        "plan": "pro"
+      },
+      "expect": {
+        "throws": false,
+        "result": {
+          "ok": false
+        },
+        "onErrorContexts": [
+          "identify"
+        ]
+      }
+    },
+    {
+      "id": "plan-hint-rides-with-usage",
+      "name": "a plan on track travels with the event",
+      "server": {
+        "POST /v1/events": [
+          {
+            "body": {
+              "results": []
+            }
+          }
+        ]
+      },
+      "action": "track",
+      "params": {
+        "customerId": "c1",
+        "plan": "pro",
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "usage": {
+          "inputTokens": 10
+        }
+      },
+      "expect": {
+        "throws": false,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/events",
+            "bodyIncludes": {
+              "plan": "pro"
+            }
+          }
+        ]
+      }
     }
   ]
 }

@@ -14,6 +14,6 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "marginfuse": "^0.2.0"
+    "marginfuse": "file:../../../../../../../../Users/ilker/work/marginfuse/packages/sdk/marginfuse-0.3.0.tgz"
   }
 }

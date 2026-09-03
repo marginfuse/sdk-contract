@@ -30,14 +30,20 @@ Generated from the Zod schemas the API validates production traffic against, so
 it cannot describe an endpoint that is not served. Also available live at
 [api.marginfuse.com/openapi.json](https://api.marginfuse.com/openapi.json).
 
-Four routes, which is the whole reason ten languages is tractable:
+Five routes, which is the whole reason ten languages is tractable:
 
 ```
 POST /v1/events                 batch ingest, idempotent on eventId
 POST /v1/decisions              allow | downgrade | topup_required | block
 POST /v1/decisions/{id}/ack     what the application actually did
+POST /v1/identify               who a customer is and what plan they pay for
 GET  /health
 ```
+
+`/v1/identify` is the one call that does not fail open. `track` retries later
+and `decide` allows, because both have a safe default; "I could not record what
+this customer pays" has none, so an SDK reports the failure to the application
+instead of swallowing it. It still must not throw.
 
 ## conformance/gateway-vectors.json
 

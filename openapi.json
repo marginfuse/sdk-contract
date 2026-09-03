@@ -4,7 +4,7 @@
     "title": "MarginFuse API",
     "version": "1.0.0",
     "summary": "Profitability guardrails for AI SaaS.",
-    "description": "MarginFuse connects revenue to per-request AI cost. This API has two jobs: accept usage\nevents after a provider call (`/v1/events`), and answer whether the next call should run\nat all (`/v1/decisions`).\n\n### Metadata only, by construction\n\nEvery request body is validated strictly and rejects unknown fields. There is no field for\nprompt text, responses, or documents anywhere in this contract, so MarginFuse cannot\nreceive them.\n\n### Every failure is safe\n\nThe official SDKs treat any non-2xx response, timeout or transport error as fail-open: the\ncalling application proceeds unprotected rather than breaking. A rate limit, an outage and\na rejected payload therefore all degrade measurement, never availability. Anything you\nbuild directly against this API should hold the same contract.",
+    "description": "MarginFuse connects revenue to per-request AI cost. This API accepts usage events after a\nprovider call (`/v1/events`), answers whether the next call should run at all\n(`/v1/decisions`), and records who a customer is and what they pay (`/v1/identify`).\n\n### Metadata only, by construction\n\nEvery request body is validated strictly and rejects unknown fields. There is no field for\nprompt text, responses, or documents anywhere in this contract, so MarginFuse cannot\nreceive them.\n\n### Every failure is safe\n\nThe official SDKs treat any non-2xx response, timeout or transport error as fail-open: the\ncalling application proceeds unprotected rather than breaking. A rate limit, an outage and\na rejected payload therefore all degrade measurement, never availability. Anything you\nbuild directly against this API should hold the same contract.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -33,6 +33,10 @@
     {
       "name": "Decisions",
       "description": "Ask whether a call should run, before it runs."
+    },
+    {
+      "name": "Customers",
+      "description": "Who a customer is and what they pay."
     },
     {
       "name": "Health",
@@ -153,6 +157,88 @@
           },
           "429": {
             "description": "Rate limit exceeded for this API key. Treat as unavailable and fail open: allow the call rather than failing the customer's request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/identify": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "operationId": "identifyCustomer",
+        "summary": "Tell MarginFuse who a customer is and what they pay",
+        "description": "Sets the plan a customer is on, and optionally a display name, an email and short\nmetadata labels that segment policies can match on.\n\n`plan` is the key of a plan **declared in Settings**, not a Stripe price. MarginFuse\nderives revenue from that plan's price for every period, which is what makes margin\nper customer, margin policies and plan budgets work with no revenue source connected.\nEvery figure built that way is labeled as a declared price, because nobody confirmed\ncollection: the margin is an upper bound.\n\nSafe to call on every sign-in. Sending the plan the customer is already on changes\nnothing. Sending a different one ends the current cycle at that moment, prorates the\nrevenue accrued so far, and starts the new plan from there. Pass `periodStart` when\nthe customer has been paying since an earlier date, and `clearPlan` to take them off\nplans entirely.\n\nOnce a revenue source bills this customer, that subscription is the truth and this\ncall is refused with `provider_subscription_present` - the application can keep\ncalling it unchanged.\n\nThere is no field for anything but identity here: no prompts, no content, no\narbitrary payload.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer's plan after the call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Identify"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or unrecognized API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No declared plan in this project has that key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The customer could not be described: its id is waiting in the mapping queue, or a revenue-source subscription already bills it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body did not match the schema. `issues` lists up to 10 problems.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this API key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -332,6 +418,10 @@
                   "type": "string",
                   "maxLength": 256
                 },
+                "plan": {
+                  "type": "string",
+                  "maxLength": 64
+                },
                 "feature": {
                   "type": "string",
                   "maxLength": 128
@@ -476,6 +566,10 @@
             "minLength": 1,
             "maxLength": 256
           },
+          "plan": {
+            "type": "string",
+            "maxLength": 64
+          },
           "feature": {
             "type": "string",
             "maxLength": 128
@@ -570,6 +664,76 @@
           "model",
           "provider",
           "degraded"
+        ],
+        "additionalProperties": false
+      },
+      "IdentifyRequest": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "plan": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "clearPlan": {
+            "type": "boolean"
+          },
+          "periodStart": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "metadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        },
+        "required": [
+          "customerId"
+        ],
+        "additionalProperties": false
+      },
+      "Identify": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string"
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "periodStart": {
+            "type": "string"
+          },
+          "periodEnd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "customerId",
+          "plan"
         ],
         "additionalProperties": false
       },

@@ -13,10 +13,10 @@
  */
 
 import { MarginFuse } from "marginfuse";
-import type { DecideParams, TrackParams } from "marginfuse";
+import type { DecideParams, IdentifyParams, TrackParams } from "marginfuse";
 
 interface Scenario {
-  action: "decide" | "track" | "guard" | "acknowledge";
+  action: "decide" | "track" | "guard" | "acknowledge" | "identify";
   options?: { timeoutMs?: number };
   params: Record<string, unknown>;
   provider?: { throws?: boolean; usage?: Record<string, number> };
@@ -59,6 +59,17 @@ async function main(): Promise<void> {
           acknowledgment: Parameters<MarginFuse["acknowledge"]>[1];
         };
         mf.acknowledge(decisionId, acknowledgment);
+        break;
+      }
+      case "identify": {
+        // The one call that reports failure instead of failing open: a wrong
+        // plan is a wrong margin, so the application has to be able to see it.
+        const raw = scenario.params as Record<string, unknown> & { periodStart?: string };
+        const params = {
+          ...raw,
+          ...(raw.periodStart !== undefined ? { periodStart: new Date(raw.periodStart) } : {}),
+        } as unknown as IdentifyParams;
+        report["result"] = await mf.identify(params);
         break;
       }
       case "guard": {

@@ -38,7 +38,7 @@ export interface Scenario {
   why?: string;
   options?: { timeoutMs?: number };
   server: Record<string, ScriptedResponse[]>;
-  action: "decide" | "track" | "guard" | "acknowledge";
+  action: "decide" | "track" | "guard" | "acknowledge" | "identify";
   params: Record<string, unknown>;
   provider?: { throws?: boolean; usage?: Record<string, number> };
   expect: {

@@ -909,7 +909,7 @@
     {
       "id": "track-never-forwards-caller-content",
       "name": "track sends only the fields it declares, never extra caller keys",
-      "why": "The privacy guarantee is that the wire format cannot express prompt content. A type declaration alone does not enforce that: in a dynamic language, or in TypeScript where the caller passes a variable rather than an object literal, excess properties survive. This scenario hands the SDK content-bearing keys and the harness scans the bytes that actually left the process.",
+      "why": "The privacy guarantee is that the wire format cannot express prompt content. A type declaration alone does not enforce that: in a dynamic language, or in TypeScript where the caller passes a variable rather than an object literal, excess properties survive and reach the network. This scenario hands the SDK content-bearing keys and the harness scans the bytes that actually left the process. An SDK whose parameters are named or typed cannot express these fields at all and raises at the call site instead; that satisfies the guarantee just as well, so refusing without sending anything passes.",
       "server": {
         "POST /v1/events": [
           {
@@ -948,7 +948,8 @@
               "eventId": "evt_privacy_1"
             }
           }
-        ]
+        ],
+        "refusalIsAcceptable": true
       }
     },
     {

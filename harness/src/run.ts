@@ -43,6 +43,23 @@ export interface Scenario {
   provider?: { throws?: boolean; usage?: Record<string, number> };
   expect: {
     throws: boolean;
+    /**
+     * The SDK may satisfy this scenario by REFUSING the call instead of
+     * making it, provided nothing reached the wire.
+     *
+     * Only for scenarios that hand the SDK something a caller should not be
+     * able to send. A language with named parameters or a typed struct cannot
+     * express an undeclared field at all, so its SDK raises at the call site;
+     * one with structural typing accepts the object and must drop the field
+     * when it builds the request. Both honour the guarantee - nothing
+     * content-bearing leaves the process - and demanding one shape would fail
+     * an SDK for being unable to commit the fault.
+     *
+     * It is not a general escape from `throws`: the banned-key scan still runs
+     * over whatever WAS sent, and a refusal only counts when the SDK sent
+     * nothing at all.
+     */
+    refusalIsAcceptable?: boolean;
     result?: Record<string, unknown>;
     providerCalls?: Array<Record<string, unknown>>;
     requests?: ExpectedRequest[];
@@ -89,9 +106,15 @@ export function checkScenario(
   if (s.expect.throws && report.outcome !== "threw") {
     failures.push("expected the SDK to propagate the provider's error, it returned instead");
   }
-  if (!s.expect.throws && report.outcome === "threw") {
+  const refused =
+    s.expect.refusalIsAcceptable === true && report.outcome === "threw" && requests.length === 0;
+  if (!s.expect.throws && report.outcome === "threw" && !refused) {
     failures.push(`the SDK threw into application code: ${report.threw}`);
   }
+  // A refusal is the whole outcome: there is no request to check expectations
+  // against, and the banned-key scan below has nothing to scan, which is the
+  // point.
+  if (refused) return failures;
 
   if (s.expect.result) {
     const mismatch = includes(report.result, s.expect.result);
